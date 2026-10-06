@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CalendarDays, Plus, TrendingUp, X } from "lucide-react";
+import { CalendarDays, Plus, X } from "lucide-react";
 import { useMemo, useState, type FormEvent } from "react";
 import { z } from "zod";
 
@@ -192,6 +192,6 @@ function Metric({ label, value }: { label: string; value: string }) {
   return <div className="min-w-36 rounded-xl bg-secondary/70 px-5 py-3 ring-1 ring-border"><p className="text-[11px] uppercase text-muted-foreground">{label}</p><p className="mt-1 text-lg font-medium tabular-nums">{value}</p></div>;
 }
 
-function DateField({ label, value, onChange, min, max }: { label: string; value: string; onChange: (value: string) => void; min?: string; max?: string }) {
+function DateField({ label, value, onChange, min, max }: { label: string; value: string; onChange: (value: string) => void; min?: string | undefined; max?: string | undefined }) {
   return <label className="text-xs font-medium text-muted-foreground"><span className="mb-1.5 flex items-center gap-1"><CalendarDays className="size-3" />{label}</span><input type="date" value={value} min={min} max={max} onChange={(event) => onChange(event.target.value)} className="h-9 w-full rounded-lg bg-secondary px-2 text-xs text-foreground ring-1 ring-border outline-none focus:ring-2 focus:ring-ring sm:px-3 sm:text-sm" /></label>;
 }
