@@ -7,31 +7,49 @@
  */
 import { neon } from "@neondatabase/serverless";
 
+type NeonSql = ReturnType<typeof neon>;
+
 const url = process.env["DATABASE_URL"];
 
 /**
- * The driver is created lazily so importing this module never throws (unit
- * tests and edge environments without DATABASE_URL can still import the
- * route tree). The first actual query is the thing that fails without a URL.
+ * Lazily-created Neon client.
+ *
+ * The proxy keeps importing this module side-effect free (unit tests and
+ * client bundles can import the route tree without DATABASE_URL — the first
+ * actual query is what fails without one). The proxy target MUST be callable
+ * so tagged-template calls (`sql\`...\``) route through the apply trap;
+ * otherwise calls throw "sql is not a function".
  */
-let cached: ReturnType<typeof neon> | undefined;
+let client: NeonSql | undefined;
 
-function getUrl(): string {
+function getClient(): NeonSql {
   if (!url) {
     throw new Error(
       "DATABASE_URL is not set. Add it to .env.local (local) or your hosting env (production).",
     );
   }
-  return url;
+  client ??= neon(url);
+  return client;
 }
 
-// Tagged-template + query() access on the pooled endpoint.
-export const sql: ReturnType<typeof neon> = new Proxy({} as ReturnType<typeof neon>, {
-  get(_target, prop, receiver) {
-    cached ??= neon(getUrl());
-    return Reflect.get(cached as object, prop, receiver);
+export const sql: NeonSql = new Proxy(
+  (() => {
+    throw new Error("Neon client accessed before initialization.");
+  }) as unknown as NeonSql,
+  {
+    apply(_target, thisArg, args) {
+      return Reflect.apply(getClient(), thisArg, args);
+    },
+    get(_target, prop) {
+      const c = getClient() as unknown as Record<string | symbol, unknown>;
+      const value = c[prop];
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(c) : value;
+    },
+    has(_target, prop) {
+      return prop in getClient();
+    },
   },
-});
+);
 
 export type IncomeRow = {
   id: number;
