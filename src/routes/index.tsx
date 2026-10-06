@@ -1,17 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { CalendarDays, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
-
-type Income = { id: number; date: string; amount: number };
-
-const initialIncome: Income[] = [
-  { id: 1, date: "2026-10-06", amount: 500_000 },
-  { id: 2, date: "2026-10-05", amount: 250_000 },
-  { id: 3, date: "2026-10-03", amount: 1_000_000 },
-];
+import { createIncome, deleteIncome, listIncomes, updateIncome, type Income } from "@/incomes/api";
 
 const incomeSchema = z.object({
   date: z.string().date("Pilih tanggal yang valid."),
@@ -46,15 +39,38 @@ export const Route = createFileRoute("/")({
 });
 
 function IncomeDashboard() {
-  const [records, setRecords] = useState(initialIncome);
+  const [records, setRecords] = useState<Income[]>([]);
+  const [loadError, setLoadError] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [date, setDate] = useState("2026-10-06");
   const [amount, setAmount] = useState("");
   const [error, setError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  /** Initial load from Neon. */
+  useEffect(() => {
+    let cancelled = false;
+    listIncomes()
+      .then((rows) => {
+        if (!cancelled) setRecords(rows);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = useMemo(
     () =>
@@ -70,61 +86,74 @@ function IncomeDashboard() {
   const chartRecords = [...filtered].reverse();
   const chartMax = Math.max(...chartRecords.map((item) => item.amount), 1);
 
-  const editingRecord =
-    editingId !== null ? records.find((item) => item.id === editingId) : undefined;
   const deletingRecord =
     deletingId !== null ? records.find((item) => item.id === deletingId) : undefined;
+  const editingRecord =
+    editingId !== null ? records.find((item) => item.id === editingId) : undefined;
 
-  function openAdd() {
+  const openAdd = useCallback(() => {
     setIsAdding(true);
-    setDate("2026-10-06");
+    setEditingId(null);
+    const today = new Date().toISOString().slice(0, 10);
+    setDate(today);
     setAmount("");
     setError("");
-  }
+  }, []);
 
-  function openEdit(record: Income) {
+  const openEdit = useCallback((record: Income) => {
+    setIsAdding(false);
     setEditingId(record.id);
     setDate(record.date);
     setAmount(String(record.amount));
     setError("");
-  }
+  }, []);
 
-  function closeForm() {
+  const closeForm = useCallback(() => {
     setIsAdding(false);
     setEditingId(null);
     setError("");
-  }
+  }, []);
 
-  function saveIncome(event: FormEvent<HTMLFormElement>) {
+  /** Create or update depending on which form is open. */
+  const saveIncome = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const result = incomeSchema.safeParse({ date, amount });
     if (!result.success) {
       setError(result.error.issues[0]?.message ?? "Periksa kembali data pemasukan.");
       return;
     }
-    if (editingId !== null) {
-      setRecords((current) =>
-        current.map((item) =>
-          item.id === editingId
-            ? { ...item, date: result.data.date, amount: result.data.amount }
-            : item,
-        ),
-      );
-    } else {
-      setRecords((current) => [
-        ...current,
-        { id: Date.now(), date: result.data.date, amount: result.data.amount },
-      ]);
+    setIsSaving(true);
+    setError("");
+    try {
+      if (editingId !== null) {
+        const updated = await updateIncome({ data: { id: editingId, ...result.data } });
+        setRecords((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      } else {
+        const created = await createIncome({ data: result.data });
+        setRecords((current) => [created, ...current]);
+      }
+      closeForm();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal menyimpan. Coba lagi.");
+    } finally {
+      setIsSaving(false);
     }
-    closeForm();
-  }
+  };
 
-  function confirmDelete() {
-    if (deletingId !== null) {
-      setRecords((current) => current.filter((item) => item.id !== deletingId));
-    }
+  /** Delete after confirmation. */
+  const confirmDelete = async () => {
+    if (deletingId === null) return;
+    const id = deletingId;
     setDeletingId(null);
-  }
+    const previous = records;
+    // Optimistic remove, roll back on failure.
+    setRecords((current) => current.filter((item) => item.id !== id));
+    try {
+      await deleteIncome({ data: { id } });
+    } catch {
+      setRecords(previous);
+    }
+  };
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -144,23 +173,33 @@ function IncomeDashboard() {
           </span>
         </header>
 
+        {loadError && (
+          <div
+            role="alert"
+            className="mt-6 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
+          >
+            Gagal memuat data: {loadError}
+          </div>
+        )}
+
         <section className="dashboard-rise mt-8 grid gap-4 md:grid-cols-3 md:gap-6">
           <div className="relative overflow-hidden rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8 md:col-span-2">
             <div className="pointer-events-none absolute -right-10 -top-12 size-48 rounded-full bg-accent blur-3xl" />
             <div className="relative">
               <p className="text-xs font-bold uppercase text-primary">Total pemasukan</p>
               <p className="mt-3 text-4xl font-extrabold leading-none text-balance sm:text-5xl">
-                {rupiah.format(total)}
+                {isLoading ? "…" : rupiah.format(total)}
               </p>
               <p className="mt-4 max-w-md text-sm leading-relaxed text-muted-foreground">
                 {filtered.length} transaksi tercatat
-                {from || to ? " dalam rentang pilihan" : " secara keseluruhan"}.
+                {from || to ? " dalam rentang pilihan" : " secara keseluruhan"} · tersimpan di Neon
+                Postgres.
               </p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-1">
-            <Metric label="Rata-rata" value={rupiah.format(average)} />
-            <Metric label="Tertinggi" value={rupiah.format(largest)} accent />
+            <Metric label="Rata-rata" value={isLoading ? "…" : rupiah.format(average)} />
+            <Metric label="Tertinggi" value={isLoading ? "…" : rupiah.format(largest)} accent />
           </div>
         </section>
 
@@ -204,7 +243,7 @@ function IncomeDashboard() {
               ))
             ) : (
               <p className="m-auto text-sm text-muted-foreground">
-                Tidak ada pemasukan pada periode ini.
+                {isLoading ? "Memuat…" : "Tidak ada pemasukan pada periode ini."}
               </p>
             )}
           </div>
@@ -268,7 +307,7 @@ function IncomeDashboard() {
                 </div>
               </div>
             ))}
-            {!filtered.length && (
+            {!filtered.length && !isLoading && (
               <p className="py-12 text-center text-sm text-muted-foreground">
                 Belum ada transaksi pada periode ini.
               </p>
@@ -342,8 +381,12 @@ function IncomeDashboard() {
                 <Button type="button" variant="ghost" onClick={closeForm}>
                   Batal
                 </Button>
-                <Button type="submit">
-                  {editingId !== null ? "Simpan perubahan" : "Simpan pemasukan"}
+                <Button type="submit" disabled={isSaving}>
+                  {isSaving
+                    ? "Menyimpan…"
+                    : editingId !== null
+                      ? "Simpan perubahan"
+                      : "Simpan pemasukan"}
                 </Button>
               </div>
             </form>
