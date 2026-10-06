@@ -18,11 +18,8 @@ const incomeSchema = z.object({
   amount: z.coerce.number().int().positive("Jumlah harus lebih dari Rp0.").max(999_999_999_999),
 });
 
-const rupiah = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
-  maximumFractionDigits: 0,
-});
+const numberFormat = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 });
+const rupiah = { format: (value: number) => `Rp${numberFormat.format(value)}` };
 
 const longDate = new Intl.DateTimeFormat("id-ID", {
   day: "numeric",
